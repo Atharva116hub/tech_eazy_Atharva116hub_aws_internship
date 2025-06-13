@@ -1,14 +1,52 @@
-#!/bin/bash
-set -euxo pipefail
+name: EC2 Auto Deploy
 
-sudo yum update -y
-sudo yum install -y git python3
+on:
+  push:
+    branches:
+      - main
+    tags:
+      - 'deploy-*'
 
-git clone https://github.com/Atharva116hub/tech_eazy_Atharva116hub_aws_internship.git
-cd tech_eazy_Atharva116hub_aws_internship
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    env:
+      AWS_REGION: ap-northeast-2
+      STAGE: dev
 
-nohup python3 main.py &
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
 
-sleep 5
-tar -czvf logs.tar.gz nohup.out
-aws s3 cp logs.tar.gz s3://<YOUR_BUCKET_NAME>
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v2
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Terraform Init and Apply
+        run: |
+          cd terraform
+          terraform init
+          terraform apply -auto-approve \
+            -var="region=${AWS_REGION}" \
+            -var="ami_id=ami-09a38f1a6411fbe1a" \
+            -var="instance_type=t2.micro" \
+            -var="key_name=techeazy-key" \
+            -var="sg_id=sg-xxxxxxxx" \
+            -var="stage=${STAGE}"
+
+      - name: SSH into EC2 and deploy app
+        run: |
+          chmod 400 .ssh/techeazy-key.pem
+          IP=$(aws ec2 describe-instances \
+            --filters "Name=tag:Stage,Values=${STAGE}" \
+            --query "Reservations[0].Instances[0].PublicIpAddress" \
+            --output text)
+          
+          ssh -o StrictHostKeyChecking=no -i .ssh/techeazy-key.pem ec2-user@$IP 'bash -s' < ec2-deploy.sh
+
+      - name: Health check
+        run: |
+          curl -I http://$IP
