@@ -1,7 +1,0 @@
-.terraform/
-*.tfplan
-*.tfstate
-*.tfstate.*
-.terraform.lock.hcl
-*.tfvars.json
-*.auto.tfvars
