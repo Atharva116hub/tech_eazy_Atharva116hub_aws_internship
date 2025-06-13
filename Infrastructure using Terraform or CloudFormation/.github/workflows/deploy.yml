@@ -49,24 +49,23 @@ jobs:
         with:
           terraform_version: 1.x
 
-      - run: terraform init
+      - name: Terraform Init
+        run: terraform init
 
-      - run: terraform apply -var="stage=${{ env.TF_VAR_stage }}" -auto-approve
+      - name: Terraform Apply
+        run: terraform apply -var="stage=${{ env.TF_VAR_stage }}" -auto-approve
 
-      - id: get_ip
+      - name: Get Outputs
+        id: get_ip
         run: |
-          EC2_PUBLIC_IP=$(terraform output -raw instance_public_ip)
-          APP_URL=$(terraform output -raw app_url)
-          echo "EC2_PUBLIC_IP=$EC2_PUBLIC_IP" >> $GITHUB_ENV
-          echo "APP_URL=$APP_URL" >> $GITHUB_ENV
-          echo "EC2 Public IP: $EC2_PUBLIC_IP"
-          echo "App URL: $APP_URL"
+          echo "EC2_PUBLIC_IP=$(terraform output -raw instance_public_ip)" >> $GITHUB_ENV
+          echo "APP_URL=$(terraform output -raw app_url)" >> $GITHUB_ENV
 
-      - run: |
-          set -e
-          echo "Waiting for app to start at ${{ env.APP_URL }}..."
+      - name: Wait and Validate App URL
+        run: |
+          echo "Waiting for app to start at $APP_URL..."
           for i in $(seq 1 10); do
-            if curl -s -f ${{ env.APP_URL }}; then
+            if curl -s -f $APP_URL; then
               echo "Application is up and running!"
               exit 0
             fi
@@ -75,12 +74,8 @@ jobs:
           done
           echo "Application did not become ready within the expected time."
           exit 1
-        env:
-          CURL_CONNECT_TIMEOUT: 5
         timeout-minutes: 5
 
-      - if: ${{ always() && github.event.inputs.destroy == 'true' }}
+      - name: Terraform Destroy
+        if: ${{ github.event.inputs.destroy == 'true' }}
         run: terraform destroy -var="stage=${{ env.TF_VAR_stage }}" -auto-approve
-        env:
-          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
