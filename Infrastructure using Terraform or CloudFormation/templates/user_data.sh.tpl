@@ -14,7 +14,9 @@ DB_HOST="${db_host}"
 API_KEY="${api_key}"
 
 yum update -y
-yum install -y git java-19-amazon-corretto-devel python3 awscli
+yum install -y git java-19-amazon-corretto-devel python3 awscli at
+systemctl enable atd
+systemctl start atd
 
 sudo alternatives --set java /usr/lib/jvm/java-19-amazon-corretto/bin/java
 sudo alternatives --set javac /usr/lib/jvm/java-19-amazon-corretto/bin/javac
@@ -39,14 +41,12 @@ sudo nohup python3 -m http.server "${APP_PORT}" &> "/var/log/${APP_NAME}_app.log
 INSTANCE_ID=$(curl -s http://169.254.169.254/latest/meta-data/instance-id)
 
 if [ "${STOP_AFTER_MINUTES}" -gt 0 ]; then
-  echo "sudo shutdown -h +${STOP_AFTER_MINUTES}" | at now + ${STOP_AFTER_MINUTES} minutes
+  echo "sudo shutdown -h now" | at now + ${STOP_AFTER_MINUTES} minutes
 fi
 
 cat << 'EOF_SHUTDOWN' > /etc/rc.d/init.d/upload_logs_on_shutdown.sh
 #!/bin/bash
-set -e
-set -u
-set -o pipefail
+set -euxo pipefail
 
 S3_BUCKET_NAME_SHUTDOWN="${s3_bucket_name}"
 INSTANCE_ID_SHUTDOWN=$(curl -s http://169.254.169.254/latest/meta-data/instance-id)
@@ -56,7 +56,7 @@ APP_NAME_SHUTDOWN="${app_name}"
 LOG_UPLOAD_TEMP_DIR="/tmp/ec2_shutdown_logs"
 
 echo "$(date): Shutdown script started for instance $INSTANCE_ID_SHUTDOWN." >> /var/log/cloud-init-output.log
-mkdir -p "$LOG_UPLOAD_TEMP_DIR" || { echo "Failed to create temp log dir." >> /var/log/cloud-init-output.log; exit 1; }
+mkdir -p "$LOG_UPLOAD_TEMP_DIR"
 
 if [ -f "/var/log/cloud-init.log" ]; then
     cp /var/log/cloud-init.log "$LOG_UPLOAD_TEMP_DIR/cloud-init.log"
@@ -87,5 +87,19 @@ EOF_SHUTDOWN
 
 chmod +x /etc/rc.d/init.d/upload_logs_on_shutdown.sh
 
-ln -s /etc/rc.d/init.d/upload_logs_on_shutdown.sh /etc/rc0.d/K99upload_logs_on_shutdown.sh
-ln -s /etc/rc.d/init.d/upload_logs_on_shutdown.sh /etc/rc6.d/K99upload_logs_on_shutdown.sh
+cat << 'EOF_UNIT' > /etc/systemd/system/upload-logs.service
+[Unit]
+Description=Upload EC2 logs to S3 on shutdown
+DefaultDependencies=no
+Before=shutdown.target reboot.target halt.target
+
+[Service]
+Type=oneshot
+ExecStart=/etc/rc.d/init.d/upload_logs_on_shutdown.sh
+RemainAfterExit=true
+
+[Install]
+WantedBy=halt.target reboot.target shutdown.target
+EOF_UNIT
+
+systemctl enable upload-logs.service
