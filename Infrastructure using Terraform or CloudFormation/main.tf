@@ -10,6 +10,7 @@ data "aws_ami" "amazon_linux_2" {
     name   = "name"
     values = ["amzn2-ami-hvm-*-x86_64-gp2"]
   }
+
   filter {
     name   = "architecture"
     values = ["x86_64"]
@@ -25,24 +26,56 @@ data "aws_security_group" "techeazy_sg" {
   vpc_id = data.aws_vpc.default.id
 }
 
+data "aws_caller_identity" "current" {}
+
+resource "aws_s3_bucket" "app_logs_bucket" {
+  bucket = "techeazy-${var.stage}-logs-${data.aws_caller_identity.current.account_id}-${timestamp()}"
+  acl    = "private"
+
+  tags = {
+    Name    = "${var.stage}-AppLogsBucket"
+    Project = "TecheazyDevOps"
+    Stage   = var.stage
+  }
+}
+
+resource "aws_s3_bucket_public_access_block" "app_logs_bucket_block" {
+  bucket = aws_s3_bucket.app_logs_bucket.id
+
+  block_public_acls       = true
+  block_public_policy     = true
+  ignore_public_acls      = true
+  restrict_public_buckets = true
+}
+
+resource "aws_s3_bucket_lifecycle_configuration" "log_retention_rule" {
+  bucket = aws_s3_bucket.app_logs_bucket.id
+
+  rule {
+    id     = "DeleteOldLogs"
+    status = "Enabled"
+
+    expiration {
+      days = var.log_retention_days
+    }
+  }
+}
+
 resource "aws_iam_policy" "s3_read_only_policy" {
   name        = "${var.stage}-TecheazyS3ReadOnlyPolicy"
   description = "IAM policy for S3 read-only access to app logs bucket"
+
   policy = jsonencode({
     Version = "2012-10-17"
     Statement = [
       {
         Effect = "Allow"
-        Action = [
-          "s3:ListBucket"
-        ]
+        Action = ["s3:ListBucket"]
         Resource = aws_s3_bucket.app_logs_bucket.arn
       },
       {
         Effect = "Allow"
-        Action = [
-          "s3:GetObject"
-        ]
+        Action = ["s3:GetObject"]
         Resource = "${aws_s3_bucket.app_logs_bucket.arn}/*"
       }
     ]
@@ -50,7 +83,8 @@ resource "aws_iam_policy" "s3_read_only_policy" {
 }
 
 resource "aws_iam_role" "s3_read_only_role" {
-  name               = "${var.stage}-TecheazyS3ReadOnlyRole"
+  name = "${var.stage}-TecheazyS3ReadOnlyRole"
+
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
     Statement = [
@@ -60,7 +94,7 @@ resource "aws_iam_role" "s3_read_only_role" {
           AWS = "arn:aws:iam::${data.aws_caller_identity.current.account_id}:root"
         }
         Action = "sts:AssumeRole"
-      },
+      }
     ]
   })
 }
@@ -72,7 +106,8 @@ resource "aws_iam_role_policy_attachment" "s3_read_only_attach" {
 
 resource "aws_iam_policy" "s3_write_policy" {
   name        = "${var.stage}-TecheazyS3WritePolicy"
-  description = "IAM policy for S3 create/upload access to app logs bucket"
+  description = "IAM policy for S3 write access to app logs bucket"
+
   policy = jsonencode({
     Version = "2012-10-17"
     Statement = [
@@ -90,9 +125,7 @@ resource "aws_iam_policy" "s3_write_policy" {
       },
       {
         Effect = "Allow"
-        Action = [
-          "s3:ListBucket"
-        ]
+        Action = ["s3:ListBucket"]
         Resource = aws_s3_bucket.app_logs_bucket.arn
       }
     ]
@@ -100,7 +133,8 @@ resource "aws_iam_policy" "s3_write_policy" {
 }
 
 resource "aws_iam_role" "s3_write_role" {
-  name               = "${var.stage}-TecheazyS3WriteRole"
+  name = "${var.stage}-TecheazyS3WriteRole"
+
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
     Statement = [
@@ -110,7 +144,7 @@ resource "aws_iam_role" "s3_write_role" {
           Service = "ec2.amazonaws.com"
         }
         Action = "sts:AssumeRole"
-      },
+      }
     ]
   })
 }
@@ -125,39 +159,8 @@ resource "aws_iam_instance_profile" "ec2_s3_write_profile" {
   role = aws_iam_role.s3_write_role.name
 }
 
-data "aws_caller_identity" "current" {}
-
-resource "aws_s3_bucket" "app_logs_bucket" {
-  bucket = "techeazy-${var.stage}-logs-${data.aws_caller_identity.current.account_id}-${timestamp()}"
-  acl    = "private"
-
-  block_public_acls       = true
-  block_public_policy     = true
-  ignore_public_acls      = true
-  restrict_public_buckets = true
-
-  tags = {
-    Name    = "${var.stage}-AppLogsBucket"
-    Project = "TecheazyDevOps"
-    Stage   = var.stage
-  }
-}
-
-resource "aws_s3_bucket_lifecycle_configuration" "log_retention_rule" {
-  bucket = aws_s3_bucket.app_logs_bucket.id
-
-  rule {
-    id     = "DeleteOldLogs"
-    status = "Enabled"
-
-    expiration {
-      days = var.log_retention_days
-    }
-  }
-}
-
 locals {
-  stage_config_path = "templates/${lower(var.stage)}_config.sh.tpl"
+  stage_config_path    = "templates/${lower(var.stage)}_config.sh.tpl"
   stage_config_content = templatefile(local.stage_config_path, {
     app_env = var.app_env,
     db_host = var.db_host,
@@ -174,16 +177,16 @@ resource "aws_instance" "app_server" {
   associate_public_ip_address = true
 
   user_data = templatefile("templates/user_data.sh.tpl", {
-    s3_bucket_name    = aws_s3_bucket.app_logs_bucket.id
-    repo_url          = var.repo_url
-    region            = var.region
-    app_name          = var.app_name
-    app_port          = var.app_port
-    stage             = var.stage
-    stop_after_minutes= var.stop_after_minutes
-    app_env           = var.app_env
-    db_host           = var.db_host
-    api_key           = var.api_key
+    s3_bucket_name     = aws_s3_bucket.app_logs_bucket.id
+    repo_url           = var.repo_url
+    region             = var.region
+    app_name           = var.app_name
+    app_port           = var.app_port
+    stage              = var.stage
+    stop_after_minutes = var.stop_after_minutes
+    app_env            = var.app_env
+    db_host            = var.db_host
+    api_key            = var.api_key
   })
 
   tags = {
