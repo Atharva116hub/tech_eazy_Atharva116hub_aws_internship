@@ -1,0 +1,86 @@
+name: EC2 App Deployment with Terraform
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'main.tf'
+      - 'variables.tf'
+      - 'outputs.tf'
+      - 'versions.tf'
+      - 'templates/**'
+      - '.github/workflows/deploy.yml'
+  workflow_dispatch:
+    inputs:
+      stage:
+        description: 'Deployment Stage (Dev or Prod)'
+        required: true
+        default: 'Dev'
+        type: choice
+        options:
+          - Dev
+          - Prod
+      destroy:
+        description: 'Destroy infrastructure after deployment/validation?'
+        required: true
+        default: 'true'
+        type: boolean
+
+env:
+  TF_VAR_stage: ${{ github.event.inputs.stage || 'Dev' }}
+  TF_VAR_region: 'ap-northeast-2'
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment: Production
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.TF_VAR_region }}
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.x
+
+      - run: terraform init
+
+      - run: terraform apply -var="stage=${{ env.TF_VAR_stage }}" -auto-approve
+
+      - id: get_ip
+        run: |
+          EC2_PUBLIC_IP=$(terraform output -raw instance_public_ip)
+          APP_URL=$(terraform output -raw app_url)
+          echo "EC2_PUBLIC_IP=$EC2_PUBLIC_IP" >> $GITHUB_ENV
+          echo "APP_URL=$APP_URL" >> $GITHUB_ENV
+          echo "EC2 Public IP: $EC2_PUBLIC_IP"
+          echo "App URL: $APP_URL"
+
+      - run: |
+          set -e
+          echo "Waiting for app to start at ${{ env.APP_URL }}..."
+          for i in $(seq 1 10); do
+            if curl -s -f ${{ env.APP_URL }}; then
+              echo "Application is up and running!"
+              exit 0
+            fi
+            echo "Attempt $i: App not ready yet. Waiting 10 seconds..."
+            sleep 10
+          done
+          echo "Application did not become ready within the expected time."
+          exit 1
+        env:
+          CURL_CONNECT_TIMEOUT: 5
+        timeout-minutes: 5
+
+      - if: ${{ always() && github.event.inputs.destroy == 'true' }}
+        run: terraform destroy -var="stage=${{ env.TF_VAR_stage }}" -auto-approve
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
