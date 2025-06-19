@@ -1,4 +1,5 @@
 ##S3 Bucket Extended
+
 This project contains a set of shell scripts designed to automate the deployment of a web application to a temporary AWS EC2 instance. The automation handles infrastructure provisioning, application setup, and crucially, archives instance logs to a private S3 bucket upon shutdown. The system is designed to work with different deployment stages, such as development and production, by using stage-specific configuration files.
 
 ##Features
