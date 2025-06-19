@@ -92,3 +92,15 @@ Add logging and monitoring via AWS CloudWatch.
 Use a higher port (e.g., 8000) to avoid using sudo.
 
 Tag instances for easier management.
+
+##How to Run
+
+chmod +x ec2-deploy.sh
+./ec2-deploy.sh
+
+then visit
+http://<EC2_PUBLIC_IP>
+
+
+*To terminate manually
+aws ec2 terminate-instances --instance-ids <INSTANCE_ID> --region ap-northeast-2
